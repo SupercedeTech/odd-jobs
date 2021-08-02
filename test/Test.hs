@@ -192,6 +192,9 @@ assertJobIdStatus conn tname logRef msg st jid = do
                                           Job.LogJobFailed j _ _ _ -> jid == Job.jobId j
                                           _ -> False
 
+    Job.Cancelled ->
+      assertBool "this is a dummy message" $ 1 == 1
+
     Job.Retry ->
       assertBool (msg <> ": Failed event not found in job-logs for JobId=" <> show jid) $
       (flip DL.any) logs $ \logEvent -> case logEvent of

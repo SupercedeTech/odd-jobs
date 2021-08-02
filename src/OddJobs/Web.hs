@@ -379,6 +379,7 @@ jobRow routes t (job@Job{..}, jobHtml) = do
       let statusFn = case jobStatus of
             Job.Success -> statusSuccess
             Job.Failed -> statusFailed
+            Job.Cancelled -> statusCancelled
             Job.Queued -> if jobRunAt > t
                           then statusFuture
                           else statusWaiting
@@ -391,6 +392,7 @@ jobRow routes t (job@Job{..}, jobHtml) = do
       let actionsFn = case jobStatus of
             Job.Success -> (const mempty)
             Job.Failed -> actionsFailed
+            Job.Cancelled -> (const mempty)
             Job.Queued -> if jobRunAt > t
                           then actionsFuture
                           else actionsWaiting
@@ -437,6 +439,12 @@ statusFailed t Job{..} = do
   span_ [ class_ "badge badge-danger" ] $ "Failed"
   span_ [ class_ "job-run-time" ] $ do
     abbr_ [ title_ (showText jobUpdatedAt) ] $ toHtml $ "Failed " <> humanReadableTime' t jobUpdatedAt <> " after " <> show jobAttempts <> " attempts"
+
+statusCancelled :: UTCTime -> Job -> Html ()
+statusCancelled t Job{..} = do
+  span_ [ class_ "badge badge-danger" ] $ "Killed"
+  span_ [ class_ "job-run-time" ] $ do
+    abbr_ [ title_ (showText jobUpdatedAt) ] $ toHtml $ "Cancelled " <> humanReadableTime' t jobUpdatedAt
 
 statusFuture :: UTCTime -> Job -> Html ()
 statusFuture t Job{..} = do

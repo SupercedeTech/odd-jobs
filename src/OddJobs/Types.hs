@@ -154,8 +154,11 @@ data Status
   -- | Jobs in 'Queued' status /may/ be picked up by the job-runner on the basis
   -- of the 'jobRunAt' field.
   | Queued
-  -- | Jobs in 'Failed' status will will not be retried by the job-runner.
+  -- | Jobs in 'Failed' status will not be retried by the job-runner.
   | Failed
+  -- | Jobs with 'Cancelled' status are cancelled by the user and will not be 
+  -- retried by the job-runner
+  | Cancelled
   -- | Jobs in 'Retry' status will be retried by the job-runner on the basis of
   -- the 'jobRunAt' field.
   | Retry
@@ -199,6 +202,7 @@ instance ToText Status where
     Queued -> "queued"
     Retry -> "retry"
     Failed -> "failed"
+    Cancelled -> "cancelled"
     Locked -> "locked"
 
 instance (StringConv Text a) => FromText (Either a Status) where
@@ -206,6 +210,7 @@ instance (StringConv Text a) => FromText (Either a Status) where
     "success" -> Right Success
     "queued" -> Right Queued
     "failed" -> Right Failed
+    "cancelled" -> Right Cancelled
     "retry" -> Right Retry
     "locked" -> Right Locked
     x -> Left $ toS $ "Unknown job status: " <> x

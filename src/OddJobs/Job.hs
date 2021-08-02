@@ -341,11 +341,11 @@ unlockJobIO conn tname jid = do
 
 cancelJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 cancelJobIO conn tname jid =
-  updateJobHelper tname conn (Failed, [Queued, Retry], Nothing, jid)
+  updateJobHelper tname conn (Cancelled, [Queued, Retry], Nothing, jid)
 
 killJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 killJobIO conn tname jid =
-  updateJobHelper tname conn (Failed, [Locked], Nothing, jid)
+  updateJobHelper tname conn (Cancelled, [Locked], Nothing, jid)
 
 updateJobHelper :: TableName
                 -> Connection
@@ -435,6 +435,20 @@ runJob jid = do
       liftIO $ void $ Prelude.foldr tryHandler (throwIO e) handlers
       pure ()
 
+killJob :: (HasJobRunner m) => JobId -> m ()
+killJob jobId = do
+  threadsRef <- envJobThreadsRef <$> getRunnerEnv
+  threads <- liftIO $ readIORef threadsRef
+
+  case jobId `DM.lookup` threads of
+    Nothing ->
+      return ()
+    
+    Just thread ->
+      void $ finally
+        (uninterruptibleCancel thread)
+        (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jobId threads, ()))
+
 -- TODO: This might have a resource leak.
 restartUponCrash :: (HasJobRunner m, Show a) => Text -> m a -> m ()
 restartUponCrash name_ action = do
@@ -457,8 +471,10 @@ jobMonitor :: forall m . (HasJobRunner m) => m ()
 jobMonitor = do
   a1 <- async $ restartUponCrash "Job poller" jobPoller
   a2 <- async $ restartUponCrash "Job event listener" jobEventListener
-  finally (void $ waitAnyCatch [a1, a2]) $ do
+  a3 <- async $ restartUponCrash "Job Kill poller" killJobPoller
+  finally (void $ waitAnyCatch [a1, a2, a3]) $ do
     log LevelInfo (LogText "Stopping jobPoller and jobEventListener threads.")
+    cancel a3
     cancel a2
     cancel a1
     log LevelInfo (LogText "Waiting for jobs to complete.")
@@ -479,6 +495,18 @@ jobPollingSqlM = do
     \ WHERE id in (select id from ? where (run_at<=? AND (" <> jobTypeSql <> " IN ?)\
     \ AND ((status in ?) OR (status = ? and locked_at<?))) ORDER BY attempts asc, run_at ASC LIMIT\
     \ 1 FOR UPDATE) RETURNING id"
+
+-- | Ref: 'killJobPoller'
+killJobPollingSqlM :: (HasJobRunner m)
+              => m Query
+killJobPollingSqlM =
+  pure $
+    "UPDATE ? SET locked_at = nil, locked_by = nil \
+      \WHERE id IN ( \
+        \SELECT id FROM ? WHERE status = ? AND locked_by = ? AND locked_at <= ? \
+          \ORDER BY locked_at ASC \
+          \LIMIT 1 FOR UPDATE \
+      \) RETURNING id"
 
 waitForJobs :: (HasJobRunner m)
             => m ()
@@ -582,6 +610,37 @@ jobPoller = do
     DontPoll -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
     PollAny -> pollWithFilter pollerDbConn Nothing
     PollOnlyTypes types -> pollWithFilter pollerDbConn (Just types)
+
+  where
+    delayAction = delaySeconds =<< getPollingInterval
+    noDelayAction = pure ()
+
+killJobPoller :: (HasJobRunner m) => m ()
+killJobPoller = do
+  processName <- liftIO jobWorkerName
+  pool <- getDbPool
+  tname <- getTableName
+
+  let pollJobToKill conn = do
+        nextAction <- mask_ $ do
+          killJobPollingSql <- killJobPollingSqlM
+          currentTime <- liftIO getCurrentTime
+          result <- liftIO $ PGS.query conn killJobPollingSql
+            (tname, tname, Cancelled, processName, currentTime)
+          
+          case result of
+            [] ->
+              pure delayAction
+
+            [Only (jobId :: JobId)] -> do
+              void $ async $ killJob jobId
+              pure noDelayAction
+
+            x ->
+              error $ "I was supposed to get only a single row, but got: " ++ (show x)
+        nextAction
+
+  withResource pool (forever . pollJobToKill)
 
   where
     delayAction = delaySeconds =<< getPollingInterval
