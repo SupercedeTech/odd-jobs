@@ -120,6 +120,7 @@ data Routes = Routes
   , rEnqueue :: JobId -> Text
   , rRunNow :: JobId -> Text
   , rCancel :: JobId -> Text
+  , rKill :: JobId -> Text
   , rRefreshJobTypes :: Text
   , rRefreshJobRunners :: Text
   , rStaticAsset :: Text -> Text
@@ -394,7 +395,7 @@ jobRow routes t (job@Job{..}, jobHtml) = do
                           then actionsFuture
                           else actionsWaiting
             Job.Retry -> actionsRetry
-            Job.Locked -> (const mempty)
+            Job.Locked -> actionsKill
       actionsFn routes job
 
 
@@ -417,6 +418,11 @@ actionsWaiting :: Routes -> Job -> Html ()
 actionsWaiting Routes{..} Job{..} = do
   form_ [ action_ (rCancel jobId), method_ "post" ] $ do
     button_ [ class_ "btn btn-danger", type_ "submit" ] $ "Cancel"
+
+actionsKill :: Routes -> Job -> Html ()
+actionsKill Routes{..} Job{..} = do
+  form_ [ action_ (rKill jobId), method_ "post" ] $ do
+    button_ [ class_ "btn btn-danger", type_ "submit" ] $ "Kill"
 
 statusSuccess :: UTCTime -> Job -> Html ()
 statusSuccess t Job{..} = do

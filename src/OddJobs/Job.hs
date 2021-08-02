@@ -58,6 +58,7 @@ module OddJobs.Job
   , runJobNowIO
   , unlockJobIO
   , cancelJobIO
+  , killJobIO
   , jobDbColumns
   , concatJobDbColumns
   , fetchAllJobTypes
@@ -106,8 +107,10 @@ import Data.Maybe (isNothing, maybe, fromMaybe, listToMaybe, mapMaybe)
 import Data.Either (either)
 import Control.Monad.Reader
 import GHC.Generics
+import Data.Map (Map)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List as DL
+import qualified Data.Map as DM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import System.FilePath (FilePath)
@@ -159,7 +162,7 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
 
 data RunnerEnv = RunnerEnv
   { envConfig :: !Config
-  , envJobThreadsRef :: !(IORef [Async ()])
+  , envJobThreadsRef :: !(IORef (Map JobId (Async ())))
   }
 
 type RunnerM = ReaderT RunnerEnv IO
@@ -203,7 +206,7 @@ instance HasJobRunner RunnerM where
 -- standalone daemon.
 startJobRunner :: Config -> IO ()
 startJobRunner jm = do
-  r <- newIORef []
+  r <- newIORef DM.empty
   let monitorEnv = RunnerEnv
                    { envConfig = jm
                    , envJobThreadsRef = r
@@ -340,6 +343,10 @@ cancelJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 cancelJobIO conn tname jid =
   updateJobHelper tname conn (Failed, [Queued, Retry], Nothing, jid)
 
+killJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
+killJobIO conn tname jid =
+  updateJobHelper tname conn (Failed, [Locked], Nothing, jid)
+
 updateJobHelper :: TableName
                 -> Connection
                 -> (Status, [Status], Maybe UTCTime, JobId)
@@ -360,13 +367,17 @@ runJobWithTimeout :: (HasJobRunner m)
                   => Seconds
                   -> Job
                   -> m ()
-runJobWithTimeout timeoutSec job = do
+runJobWithTimeout timeoutSec job@Job{jobId} = do
   threadsRef <- envJobThreadsRef <$> getRunnerEnv
   jobRunner_ <- getJobRunner
 
   a <- async $ liftIO $ jobRunner_ job
 
-  x <- atomicModifyIORef' threadsRef $ \threads -> (a:threads, DL.map asyncThreadId (a:threads))
+  x <- atomicModifyIORef' threadsRef $ \threads -> 
+    ( DM.insert jobId a threads
+    , DL.map asyncThreadId $ DM.elems $ DM.insert jobId a threads
+    )
+
   -- liftIO $ putStrLn $ "Threads: " <> show x
   log LevelDebug $ LogText $ toS $ "Spawned job in " <> show (asyncThreadId a)
 
@@ -377,7 +388,7 @@ runJobWithTimeout timeoutSec job = do
 
   void $ finally
     (waitEitherCancel a t)
-    (atomicModifyIORef' threadsRef $ \threads -> (DL.delete a threads, ()))
+    (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jobId threads, ()))
 
 
 runJob :: (HasJobRunner m) => JobId -> m ()
@@ -472,8 +483,8 @@ jobPollingSqlM = do
 waitForJobs :: (HasJobRunner m)
             => m ()
 waitForJobs = do
-  threadsRef <- envJobThreadsRef <$> getRunnerEnv
-  readIORef threadsRef >>= \case
+  curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef) >>= (return . DM.elems)
+  case curJobs of
     [] -> log LevelInfo $ LogText "All job-threads exited"
     as -> do
       tid <- myThreadId
@@ -492,7 +503,7 @@ getConcurrencyControlFn :: (HasJobRunner m)
 getConcurrencyControlFn = getConcurrencyControl >>= \case
   UnlimitedConcurrentJobs -> pure $ const $ pure $ PollAny
   MaxConcurrentJobs maxJobs -> pure $ const $ do
-    curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef)
+    curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef) >>= (return . DM.elems)
     pure $ pollIf $ (DL.length curJobs) < maxJobs
   MaxConcurrentJobsPerType n -> pure $ \dbConn -> do
     tname <- getTableName
