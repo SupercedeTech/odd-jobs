@@ -75,7 +75,7 @@ myJobRunner job = do
       putStrLn $ "This should call the function that actually sends the welcome email. " <>
         "\nWe are purposely waiting 60 seconds before completing this job so that graceful shutdown can be demonstrated."
       delaySeconds (Seconds 60)
-      putStrLn "60 second wait is now over..."
+      putStrLn $ "SendWelcomeEmail to user: " <> (show userId) <> " complete (60 second wait is now over...)"
     SendPasswordResetEmail tkn ->
       putStrLn "This should call the function that actually sends the password-reset email"
     SetupSampleData userId -> do
@@ -109,7 +109,7 @@ main = do
           -- `OddJobs.ConfigBuilder`. If you want to actually use
           -- structured-logging you'll need to define your own logging function.
           let jobLogger = defaultTimedLogger logger (defaultLogStr defaultJobType)
-              cfg = mkConfig jobLogger "jobs" dbPool (MaxConcurrentJobs 50) myJobRunner Prelude.id
+              cfg = mkConfig jobLogger "jobs_test" dbPool (MaxConcurrentJobs 50) myJobRunner Prelude.id
 
           -- Finally, executing the callback function that was passed to me...
           callback cfg

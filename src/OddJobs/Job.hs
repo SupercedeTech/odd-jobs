@@ -329,7 +329,7 @@ deleteJobIO conn tname jid = do
 runJobNowIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 runJobNowIO conn tname jid = do
   t <- getCurrentTime
-  updateJobHelper tname conn (Queued, [Queued, Retry, Failed], Just t, jid)
+  updateJobHelper tname conn (Queued, [Queued, Retry, Failed, Cancelled], Just t, jid)
 
 -- | TODO: First check in all job-runners if this job is still running, or not,
 -- and somehow send an uninterruptibleCancel to that thread.
@@ -436,18 +436,24 @@ runJob jid = do
       pure ()
 
 killJob :: (HasJobRunner m) => JobId -> m ()
-killJob jobId = do
+killJob jid = do
   threadsRef <- envJobThreadsRef <$> getRunnerEnv
   threads <- liftIO $ readIORef threadsRef
+  mJob <- findJobById jid
 
-  case jobId `DM.lookup` threads of
-    Nothing ->
-      return ()
-    
-    Just thread ->
+  case (mJob, jid `DM.lookup` threads) of
+    (Just job, Just thread) -> do
+      log LevelInfo $ LogKillJobSuccess job
       void $ finally
         (uninterruptibleCancel thread)
-        (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jobId threads, ()))
+        (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jid threads, ()))
+
+    (Just job, Nothing) -> do
+      log LevelInfo $ LogKillJobFailed job
+      return ()
+
+    (Nothing, _) ->
+      error $ "Unable to find job in db to kill, jobId = " <> (show jid)
 
 -- TODO: This might have a resource leak.
 restartUponCrash :: (HasJobRunner m, Show a) => Text -> m a -> m ()
@@ -501,7 +507,7 @@ killJobPollingSqlM :: (HasJobRunner m)
               => m Query
 killJobPollingSqlM =
   pure $
-    "UPDATE ? SET locked_at = nil, locked_by = nil \
+    "UPDATE ? SET locked_at = NULL, locked_by = NULL \
       \WHERE id IN ( \
         \SELECT id FROM ? WHERE status = ? AND locked_by = ? AND locked_at <= ? \
           \ORDER BY locked_at ASC \
@@ -614,6 +620,15 @@ jobPoller = do
   where
     delayAction = delaySeconds =<< getPollingInterval
     noDelayAction = pure ()
+
+-- | Executes 'killJobPollingSql' every 'cfgPollingInterval' seconds to pick up jobs
+-- that are cancelled and need to be killed. Uses @UPDATE@ along with @SELECT...
+-- ..FOR UPDATE@ to efficiently find a job that matches /all/ of the following 
+-- conditions:
+--
+--   * 'jobStatus' should be 'cancelled'
+--   * 'jobLockedAt' should be in the past
+--   * 'jobLockedBy' should be the current job worker name
 
 killJobPoller :: (HasJobRunner m) => m ()
 killJobPoller = do

@@ -72,6 +72,11 @@ data LogEvent
   | LogJobFailed !Job !SomeException !FailureMode !NominalDiffTime
   -- | Emitted when a job times out and is picked-up again for execution
   | LogJobTimeout !Job
+  -- | Emitted when user kills a job and the job thread sucessfully cancelled thereafter.
+  | LogKillJobSuccess !Job
+  -- | Emitted when user kills a job and the job thread is not found in the threadRef
+  -- | (most likely the job has either got completed or timed out).
+  | LogKillJobFailed !Job 
   -- | Emitted whenever 'OddJobs.Job.jobPoller' polls the DB table
   | LogPoll
   -- | TODO
