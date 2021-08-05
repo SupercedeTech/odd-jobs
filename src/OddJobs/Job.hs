@@ -450,10 +450,9 @@ killJob jid = do
 
     (Just job, Nothing) -> do
       log LevelInfo $ LogKillJobFailed job
-      return ()
 
     (Nothing, _) ->
-      error $ "Unable to find job in db to kill, jobId = " <> (show jid)
+      log LevelError $ LogText $ "Unable to find job in db to kill, jobId = " <> toS (show jid)
 
 -- TODO: This might have a resource leak.
 restartUponCrash :: (HasJobRunner m, Show a) => Text -> m a -> m ()
