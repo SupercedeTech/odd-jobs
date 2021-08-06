@@ -58,6 +58,7 @@ module OddJobs.Job
   , runJobNowIO
   , unlockJobIO
   , cancelJobIO
+  , killJobIO
   , jobDbColumns
   , concatJobDbColumns
   , fetchAllJobTypes
@@ -106,8 +107,10 @@ import Data.Maybe (isNothing, maybe, fromMaybe, listToMaybe, mapMaybe)
 import Data.Either (either)
 import Control.Monad.Reader
 import GHC.Generics
+import Data.Map (Map)
 import qualified Data.HashMap.Strict as HM
 import qualified Data.List as DL
+import qualified Data.Map as DM
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import System.FilePath (FilePath)
@@ -159,7 +162,7 @@ class (MonadUnliftIO m, MonadBaseControl IO m) => HasJobRunner m where
 
 data RunnerEnv = RunnerEnv
   { envConfig :: !Config
-  , envJobThreadsRef :: !(IORef [Async ()])
+  , envJobThreadsRef :: !(IORef (Map JobId (Async ())))
   }
 
 type RunnerM = ReaderT RunnerEnv IO
@@ -203,7 +206,7 @@ instance HasJobRunner RunnerM where
 -- standalone daemon.
 startJobRunner :: Config -> IO ()
 startJobRunner jm = do
-  r <- newIORef []
+  r <- newIORef DM.empty
   let monitorEnv = RunnerEnv
                    { envConfig = jm
                    , envJobThreadsRef = r
@@ -326,7 +329,7 @@ deleteJobIO conn tname jid = do
 runJobNowIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 runJobNowIO conn tname jid = do
   t <- getCurrentTime
-  updateJobHelper tname conn (Queued, [Queued, Retry, Failed], Just t, jid)
+  updateJobHelper tname conn (Queued, [Queued, Retry, Failed, Cancelled], Just t, jid)
 
 -- | TODO: First check in all job-runners if this job is still running, or not,
 -- and somehow send an uninterruptibleCancel to that thread.
@@ -338,7 +341,11 @@ unlockJobIO conn tname jid = do
 
 cancelJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
 cancelJobIO conn tname jid =
-  updateJobHelper tname conn (Failed, [Queued, Retry], Nothing, jid)
+  updateJobHelper tname conn (Cancelled, [Queued, Retry], Nothing, jid)
+
+killJobIO :: Connection -> TableName -> JobId -> IO (Maybe Job)
+killJobIO conn tname jid =
+  updateJobHelper tname conn (Cancelled, [Locked], Nothing, jid)
 
 updateJobHelper :: TableName
                 -> Connection
@@ -360,13 +367,17 @@ runJobWithTimeout :: (HasJobRunner m)
                   => Seconds
                   -> Job
                   -> m ()
-runJobWithTimeout timeoutSec job = do
+runJobWithTimeout timeoutSec job@Job{jobId} = do
   threadsRef <- envJobThreadsRef <$> getRunnerEnv
   jobRunner_ <- getJobRunner
 
   a <- async $ liftIO $ jobRunner_ job
 
-  x <- atomicModifyIORef' threadsRef $ \threads -> (a:threads, DL.map asyncThreadId (a:threads))
+  x <- atomicModifyIORef' threadsRef $ \threads -> 
+    ( DM.insert jobId a threads
+    , DL.map asyncThreadId $ DM.elems $ DM.insert jobId a threads
+    )
+
   -- liftIO $ putStrLn $ "Threads: " <> show x
   log LevelDebug $ LogText $ toS $ "Spawned job in " <> show (asyncThreadId a)
 
@@ -377,7 +388,7 @@ runJobWithTimeout timeoutSec job = do
 
   void $ finally
     (waitEitherCancel a t)
-    (atomicModifyIORef' threadsRef $ \threads -> (DL.delete a threads, ()))
+    (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jobId threads, ()))
 
 
 runJob :: (HasJobRunner m) => JobId -> m ()
@@ -424,6 +435,25 @@ runJob jid = do
       liftIO $ void $ Prelude.foldr tryHandler (throwIO e) handlers
       pure ()
 
+killJob :: (HasJobRunner m) => JobId -> m ()
+killJob jid = do
+  threadsRef <- envJobThreadsRef <$> getRunnerEnv
+  threads <- liftIO $ readIORef threadsRef
+  mJob <- findJobById jid
+
+  case (mJob, jid `DM.lookup` threads) of
+    (Just job, Just thread) -> do
+      log LevelInfo $ LogKillJobSuccess job
+      void $ finally
+        (uninterruptibleCancel thread)
+        (atomicModifyIORef' threadsRef $ \threads -> (DM.delete jid threads, ()))
+
+    (Just job, Nothing) -> do
+      log LevelInfo $ LogKillJobFailed job
+
+    (Nothing, _) ->
+      log LevelError $ LogText $ "Unable to find job in db to kill, jobId = " <> toS (show jid)
+
 -- TODO: This might have a resource leak.
 restartUponCrash :: (HasJobRunner m, Show a) => Text -> m a -> m ()
 restartUponCrash name_ action = do
@@ -446,8 +476,10 @@ jobMonitor :: forall m . (HasJobRunner m) => m ()
 jobMonitor = do
   a1 <- async $ restartUponCrash "Job poller" jobPoller
   a2 <- async $ restartUponCrash "Job event listener" jobEventListener
-  finally (void $ waitAnyCatch [a1, a2]) $ do
+  a3 <- async $ restartUponCrash "Job Kill poller" killJobPoller
+  finally (void $ waitAnyCatch [a1, a2, a3]) $ do
     log LevelInfo (LogText "Stopping jobPoller and jobEventListener threads.")
+    cancel a3
     cancel a2
     cancel a1
     log LevelInfo (LogText "Waiting for jobs to complete.")
@@ -469,11 +501,23 @@ jobPollingSqlM = do
     \ AND ((status in ?) OR (status = ? and locked_at<?))) ORDER BY attempts asc, run_at ASC LIMIT\
     \ 1 FOR UPDATE) RETURNING id"
 
+-- | Ref: 'killJobPoller'
+killJobPollingSqlM :: (HasJobRunner m)
+              => m Query
+killJobPollingSqlM =
+  pure $
+    "UPDATE ? SET locked_at = NULL, locked_by = NULL \
+      \WHERE id IN ( \
+        \SELECT id FROM ? WHERE status = ? AND locked_by = ? AND locked_at <= ? \
+          \ORDER BY locked_at ASC \
+          \LIMIT 1 FOR UPDATE \
+      \) RETURNING id"
+
 waitForJobs :: (HasJobRunner m)
             => m ()
 waitForJobs = do
-  threadsRef <- envJobThreadsRef <$> getRunnerEnv
-  readIORef threadsRef >>= \case
+  curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef) >>= (return . DM.elems)
+  case curJobs of
     [] -> log LevelInfo $ LogText "All job-threads exited"
     as -> do
       tid <- myThreadId
@@ -492,7 +536,7 @@ getConcurrencyControlFn :: (HasJobRunner m)
 getConcurrencyControlFn = getConcurrencyControl >>= \case
   UnlimitedConcurrentJobs -> pure $ const $ pure $ PollAny
   MaxConcurrentJobs maxJobs -> pure $ const $ do
-    curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef)
+    curJobs <- getRunnerEnv >>= (readIORef . envJobThreadsRef) >>= (return . DM.elems)
     pure $ pollIf $ (DL.length curJobs) < maxJobs
   MaxConcurrentJobsPerType n -> pure $ \dbConn -> do
     tname <- getTableName
@@ -571,6 +615,46 @@ jobPoller = do
     DontPoll -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
     PollAny -> pollWithFilter pollerDbConn Nothing
     PollOnlyTypes types -> pollWithFilter pollerDbConn (Just types)
+
+  where
+    delayAction = delaySeconds =<< getPollingInterval
+    noDelayAction = pure ()
+
+-- | Executes 'killJobPollingSql' every 'cfgPollingInterval' seconds to pick up jobs
+-- that are cancelled and need to be killed. Uses @UPDATE@ along with @SELECT...
+-- ..FOR UPDATE@ to efficiently find a job that matches /all/ of the following 
+-- conditions:
+--
+--   * 'jobStatus' should be 'cancelled'
+--   * 'jobLockedAt' should be in the past
+--   * 'jobLockedBy' should be the current job worker name
+
+killJobPoller :: (HasJobRunner m) => m ()
+killJobPoller = do
+  processName <- liftIO jobWorkerName
+  pool <- getDbPool
+  tname <- getTableName
+
+  let pollJobToKill conn = do
+        nextAction <- mask_ $ do
+          killJobPollingSql <- killJobPollingSqlM
+          currentTime <- liftIO getCurrentTime
+          result <- liftIO $ PGS.query conn killJobPollingSql
+            (tname, tname, Cancelled, processName, currentTime)
+          
+          case result of
+            [] ->
+              pure delayAction
+
+            [Only (jobId :: JobId)] -> do
+              void $ async $ killJob jobId
+              pure noDelayAction
+
+            x ->
+              error $ "I was supposed to get only a single row, but got: " ++ (show x)
+        nextAction
+
+  withResource pool (forever . pollJobToKill)
 
   where
     delayAction = delaySeconds =<< getPollingInterval

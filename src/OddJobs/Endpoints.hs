@@ -59,6 +59,7 @@ data Routes route = Routes
   , rEnqueue :: route :- "enqueue" :> Capture "jobId" JobId :> Post '[HTML] NoContent
   , rRunNow :: route :- "run" :> Capture "jobId" JobId :> Post '[HTML] NoContent
   , rCancel :: route :- "cancel" :> Capture "jobId" JobId :> Post '[HTML] NoContent
+  , rKill :: route :- "kill" :> Capture "jobId" JobId :> Post '[HTML] NoContent
   , rRefreshJobTypes :: route :- "refresh-job-types" :> Post '[HTML] NoContent
   , rRefreshJobRunners :: route :- "refresh-job-runners" :> Post '[HTML] NoContent
   } deriving (Generic)
@@ -113,6 +114,7 @@ server cfg env nt =
       { rFilterResults = nt . (filterResults cfg env)
       , rEnqueue = nt . (enqueueJob cfg env)
       , rCancel = nt . (cancelJob cfg env)
+      , rKill = nt . (killJob cfg env)
       , rRunNow = nt . (runJobNow cfg env)
       , rRefreshJobTypes = nt $ refreshJobTypes cfg env
       , rRefreshJobRunners = nt $ refreshJobRunners cfg env
@@ -125,6 +127,7 @@ server2 cfg env = Routes
   { rFilterResults = (filterResults cfg env)
   , rEnqueue = (enqueueJob cfg env)
   , rCancel = (cancelJob cfg env)
+  , rKill = (killJob cfg env)
   , rRunNow = (runJobNow cfg env)
   , rRefreshJobTypes = refreshJobTypes cfg env
   , rRefreshJobRunners = refreshJobRunners cfg env
@@ -153,6 +156,14 @@ cancelJob :: Config
           -> Handler NoContent
 cancelJob Config{..} env jid = do
   liftIO $ withResource cfgDbPool $ \conn -> void $ cancelJobIO conn cfgTableName jid
+  redirectToHome env
+
+killJob :: Config
+        -> Env
+        -> JobId
+        -> Handler NoContent
+killJob Config{..} env jid = do
+  liftIO $ withResource cfgDbPool $ \conn -> void $ killJobIO conn cfgTableName jid
   redirectToHome env
 
 runJobNow :: Config
@@ -200,6 +211,7 @@ routes linkFn = Web.Routes
   , Web.rEnqueue = rEnqueue
   , Web.rRunNow = rRunNow
   , Web.rCancel = rCancel
+  , Web.rKill = rKill
   , Web.rRefreshJobTypes = rRefreshJobTypes
   , Web.rRefreshJobRunners = rRefreshJobRunners
   , Web.rStaticAsset = linkFn
