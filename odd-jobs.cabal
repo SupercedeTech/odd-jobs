@@ -1,10 +1,8 @@
 cabal-version: 1.12
 
--- This file has been generated from package.yaml by hpack version 0.33.0.
+-- This file has been generated from package.yaml by hpack version 0.34.4.
 --
 -- see: https://github.com/sol/hpack
---
--- hash: 6677b61240c930d793f07c90cd9dc719586179d99bdc7dc7b3dbe9a32d9a2afa
 
 name:           odd-jobs
 version:        0.2.2
@@ -61,7 +59,14 @@ library
       Paths_odd_jobs
   hs-source-dirs:
       src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns
   build-depends:
       aeson
@@ -116,12 +121,20 @@ executable devel
   hs-source-dirs:
       dev
       src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is DevelMain
   build-depends:
       aeson
     , base >=4.7 && <5
     , bytestring
+    , containers
     , direct-daemonize
     , directory
     , either
@@ -163,12 +176,20 @@ executable odd-jobs-cli-example
       Paths_odd_jobs
   hs-source-dirs:
       examples
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is OddJobsCliExample
   build-depends:
       aeson
     , base >=4.7 && <5
     , bytestring
+    , containers
     , direct-daemonize
     , directory
     , either
@@ -220,7 +241,14 @@ test-suite jobrunner
   hs-source-dirs:
       test
       src
-  default-extensions: NamedFieldPuns LambdaCase TemplateHaskell ScopedTypeVariables GeneralizedNewtypeDeriving QuasiQuotes OverloadedStrings
+  default-extensions:
+      NamedFieldPuns
+      LambdaCase
+      TemplateHaskell
+      ScopedTypeVariables
+      GeneralizedNewtypeDeriving
+      QuasiQuotes
+      OverloadedStrings
   ghc-options: -Wall -fno-warn-orphans -fno-warn-unused-imports -fno-warn-dodgy-exports -Werror=missing-fields -Werror=incomplete-patterns -threaded -with-rtsopts=-N -main-is Test
   build-depends:
       aeson

@@ -114,6 +114,30 @@ data FailureMode
 -- by 'JobErrHandler' and 'cfgOnJobFailed'.
 data JobErrHandler = forall a e . (Exception e) => JobErrHandler (e -> Job -> FailureMode -> IO a)
 
+type FunctionName = PGS.Identifier
+
+data ResourceCfg = ResourceCfg
+  { resCfgResourceTable :: TableName
+  -- ^ Table to use for tracking resources and their limits. Both this and
+  -- 'resCfgUsageTable' should be created by 'OddJobs.Migrations.createResourceTables'.
+
+  , resCfgUsageTable :: TableName
+  -- ^ Table to use for tracking how jobs use resources.
+
+  , resCfgCheckResourceFunction :: FunctionName
+  -- ^ Name of the function that checks that the resources required to run a
+  -- job are all available (i.e. that the total usage of each resource, plus
+  -- the usage the job needs to run, does not exceed the resource limit). The
+  -- function should have the signature @(int) RETURNS bool@, and return @TRUE@
+  -- if the job with the given ID has its resources available.
+
+  , resCfgDefaultLimit :: Int
+  -- ^ When a job requires a resource not already in 'resCfgResourceTable',
+  -- what should its limit be set to?
+  } deriving (Show)
+
+newtype ResourceId = ResourceId { rawResourceId :: Text }
+  deriving (Show)
 
 -- | __Note:__ Please read the section on [controlling
 -- concurrency](https://www.haskelltutorials.com/odd-jobs/guide.html#controlling-concurrency)
@@ -123,17 +147,21 @@ data ConcurrencyControl
   -- | The maximum number of concurrent jobs that /this instance/ of the
   -- job-runner can execute.
   = MaxConcurrentJobs Int
-  -- | The maximum number of concurrent jobs that /this instance/ of the job
-  -- runner can execute for /each type/. If the job limit is reached for a
-  -- particular job type, new jobs with that type will /not/ be picked up by the
-  -- job runner, even if there are no jobs running with other types.
-  | MaxConcurrentJobsPerType Int
   -- | __Not recommended:__ Please do not use this in production unless you know
   -- what you're doing. No machine can support unlimited concurrency. If your
   -- jobs are doing anything worthwhile, running a sufficiently large number
   -- concurrently is going to max-out /some/ resource of the underlying machine,
   -- such as, CPU, memory, disk IOPS, or network bandwidth.
   | UnlimitedConcurrentJobs
+
+  -- | Limit jobs according to their access to resources, as tracked in the DB
+  -- according to the 'ResourceCfg'.
+  --
+  -- __Warning:__ without sufficient limits, this can easily hit the same problems
+  -- as 'UnlimitedConcurrentJobs' where jobs are able to exhaust system resources.
+  -- It is therefore recommended that all jobs in your system use /some/ DB-tracked
+  -- resource.
+  | ResourceLimits ResourceCfg
 
   -- | Use this to dynamically determine if the next job should be picked-up, or
   -- not. This is useful to write custom-logic to determine whether a limited
@@ -144,8 +172,8 @@ data ConcurrencyControl
 instance Show ConcurrencyControl where
   show cc = case cc of
     MaxConcurrentJobs n -> "MaxConcurrentJobs " <> show n
-    MaxConcurrentJobsPerType n -> "MaxConcurrentJobsPerType " <> show n
     UnlimitedConcurrentJobs -> "UnlimitedConcurrentJobs"
+    ResourceLimits cfg -> "ResourceLimits " <> show cfg
     DynamicConcurrency _ -> "DynamicConcurrency (IO Bool)"
 
 type JobId = Int
