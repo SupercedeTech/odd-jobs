@@ -387,6 +387,14 @@ data Config = Config
     -- picked up for execution again
   , cfgDefaultJobTimeout :: Seconds
 
+    -- | How far into the future should jobs which can be retried be queued for?
+    --
+    -- The 'Int' argument is the number of times the job has been attepted. It will
+    -- always be at least 1, since the job will have to have started at least once
+    -- in order to fail and be retried. The default implementation is an exponential
+    -- backoff of @'Seconds' $ 2 ^ 'jobAttempts'@.
+  , cfgDefaultRetryBackoff :: Int -> IO Seconds
+
     -- | How to convert a list of 'Job's to a list of HTML fragments. This is
     -- used in the Web\/Admin UI. This function accepts a /list/ of jobs and
     -- returns a /list/ of 'Html' fragments, because, in case, you need to query
