@@ -72,6 +72,7 @@ mkConfig logger tname dbpool ccControl jrunner configOverridesFn =
             , cfgJobToHtml = defaultJobToHtml (cfgJobType cfg)
             , cfgAllJobTypes = (defaultDynamicJobTypes (cfgTableName cfg) (cfgJobTypeSql cfg))
             , cfgJobTypeSql = defaultJobTypeSql
+            , cfgDefaultRetryBackoff = \attempts -> pure $ Seconds $ 2 ^ attempts
             }
   in cfg
 
