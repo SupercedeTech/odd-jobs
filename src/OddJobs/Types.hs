@@ -395,6 +395,9 @@ data Config = Config
     -- backoff of @'Seconds' $ 2 ^ 'jobAttempts'@.
   , cfgDefaultRetryBackoff :: Int -> IO Seconds
 
+    -- | Should successful jobs be deleted from the queue to save on table space?
+  , cfgDeleteSuccessfulJobs :: Bool
+
     -- | How to convert a list of 'Job's to a list of HTML fragments. This is
     -- used in the Web\/Admin UI. This function accepts a /list/ of jobs and
     -- returns a /list/ of 'Html' fragments, because, in case, you need to query
