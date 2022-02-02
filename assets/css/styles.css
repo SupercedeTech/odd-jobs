@@ -42,7 +42,6 @@ td.job-type {
 
 .job .job-payload {
     color: #777;
-    display: inline-block;
 }
 
 .job-payload .key {
@@ -142,11 +141,19 @@ abbr[title] {
     margin-right: 0.75rem;
 }
 
+.job .job-payload.collapsed {
+    height: 1.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: break-spaces;
+    color: #777;
+}
+
 .job .job-error.collapsed {
     height: 1.5em;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: no-wrap;
+    white-space: break-spaces;
     color: #777;
 }
 
