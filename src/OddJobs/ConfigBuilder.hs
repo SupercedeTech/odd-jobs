@@ -21,6 +21,7 @@ import Control.Monad
 import Data.String.Conv
 import GHC.Exts (toList)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import UnliftIO (MonadUnliftIO, withRunInIO, bracket, liftIO)
 import qualified System.Log.FastLogger as FLogger
 
@@ -126,8 +127,16 @@ defaultJobToHtml jobType js =
       div_ [ class_ "job" ] $ do
         div_ [ class_ "job-type" ] $ do
           toHtml $ jobType j
-        div_ [ class_ "job-payload" ] $ do
-          defaultPayloadToHtml $ defaultJobContent $ jobPayload j
+        let payload = defaultJobContent $ jobPayload j
+            showPayload = not $ isJsonLarge payload
+        div_ [ class_ $ "job-payload" <> if showPayload then "" else " collapsed" ] $ do
+          a_ [ href_ "javascript: void(0);", onclick_ "togglePayload(this)" ] $ do
+           span_ [ class_ $ "badge badge-secondary payload-expand" <> if showPayload then " d-none" else "" ]
+            "+ Payload"
+           span_ [ class_ $ "badge badge-secondary payload-collapse" <> if showPayload then "" else " d-none" ]
+            "- Payload"
+          " "
+          defaultPayloadToHtml payload
         case jobLastError j of
           Nothing -> mempty
           Just e -> do
@@ -137,6 +146,9 @@ defaultJobToHtml jobType js =
                 span_ [ class_ "badge badge-secondary error-collapse d-none" ] "- Last error"
               " "
               defaultErrorToHtml e
+
+    isJsonLarge :: Aeson.Value -> Bool
+    isJsonLarge = (>= 200) . BSL.length . encode -- an arbitrary boundary
 
 
 defaultErrorToHtml :: Value -> Html ()
