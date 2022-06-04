@@ -75,7 +75,8 @@ module OddJobs.Job
 where
 
 import OddJobs.Types
-import Data.Pool
+import qualified Data.Pool as Pool
+import Data.Pool(Pool)
 import Data.Text as T
 import Database.PostgreSQL.Simple as PGS
 import Database.PostgreSQL.Simple.Notification
@@ -255,6 +256,10 @@ concatJobDbColumns = concatJobDbColumns_ jobDbColumns ""
 
 findJobByIdQuery :: PGS.Query
 findJobByIdQuery = "SELECT " <> concatJobDbColumns <> " FROM ? WHERE id = ?"
+
+withResource :: MonadUnliftIO m => Pool a -> (a -> m b) -> m b
+withResource pool fa =
+  withRunInIO $ \runInIO -> Pool.withResource pool (runInIO . fa)
 
 withDbConnection :: (HasJobRunner m)
                  => (Connection -> m a)
@@ -573,34 +578,34 @@ jobEventListener = do
           [Only (_ :: JobId)] -> pure $ Just jid
           x -> error $ "WTF just happned? Was expecting a single row to be returned, received " ++ (show x)
 
-  withResource pool $ \monitorDbConn -> do
-    void $ liftIO $ PGS.execute monitorDbConn ("LISTEN ?") (Only $ pgEventName tname)
+  withRunInIO $ \runInIO -> withResource pool $ \monitorDbConn -> do
+    void $ PGS.execute monitorDbConn ("LISTEN ?") (Only $ pgEventName tname)
     forever $ do
-      log LevelDebug $ LogText "[LISTEN/NOTIFY] Event loop"
-      notif <- liftIO $ getNotification monitorDbConn
-      concurrencyControlFn >>= \case
-        False -> log LevelWarn $ LogText "Received job event, but ignoring it due to concurrency control"
+      runInIO $ log LevelDebug $ LogText "[LISTEN/NOTIFY] Event loop"
+      notif <- getNotification monitorDbConn
+      runInIO concurrencyControlFn >>= \case
+        False -> runInIO $ log LevelWarn $ LogText "Received job event, but ignoring it due to concurrency control"
         True -> do
           let pload = notificationData notif
-          log LevelDebug $ LogText $ toS $ "NOTIFY | " <> show pload
+          runInIO $ log LevelDebug $ LogText $ toS $ "NOTIFY | " <> show pload
           case (eitherDecode $ toS pload) of
-            Left e -> log LevelError $ LogText $ toS $  "Unable to decode notification payload received from Postgres. Payload=" <> show pload <> " Error=" <> show e
+            Left e -> runInIO $ log LevelError $ LogText $ toS $  "Unable to decode notification payload received from Postgres. Payload=" <> show pload <> " Error=" <> show e
 
             -- Checking if job needs to be fired immediately AND it is not already
             -- taken by some othe thread, by the time it got to us
             Right (v :: Value) -> case (Aeson.parseMaybe parser v) of
-              Nothing -> log LevelError $ LogText $ toS $ "Unable to extract id/run_at/locked_at from " <> show pload
+              Nothing -> runInIO $ log LevelError $ LogText $ toS $ "Unable to extract id/run_at/locked_at from " <> show pload
               Just (jid, runAt_, mLockedAt_) -> do
-                t <- liftIO getCurrentTime
+                t <- getCurrentTime
                 if (runAt_ <= t) && (isNothing mLockedAt_)
-                  then do log LevelDebug $ LogText $ toS $ "Job needs needs to be run immediately. Attempting to fork in background. JobId=" <> show jid
+                  then do runInIO $ log LevelDebug $ LogText $ toS $ "Job needs needs to be run immediately. Attempting to fork in background. JobId=" <> show jid
                           void $ async $ do
                             -- Let's try to lock the job first... it is possible that it has already
                             -- been picked up by the poller by the time we get here.
-                            tryLockingJob jid >>= \case
+                            runInIO $ tryLockingJob jid >>= \case
                               Nothing -> pure ()
                               Just lockedJid -> runJob lockedJid
-                  else log LevelDebug $ LogText $ toS $ "Job is either for future, or is already locked. Skipping. JobId=" <> show jid
+                  else runInIO $ log LevelDebug $ LogText $ toS $ "Job is either for future, or is already locked. Skipping. JobId=" <> show jid
   where
     parser :: Value -> Aeson.Parser (JobId, UTCTime, Maybe UTCTime)
     parser = withObject "expecting an object to parse job.run_at and job.locked_at" $ \o -> do
