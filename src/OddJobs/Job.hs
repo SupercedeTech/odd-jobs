@@ -40,6 +40,7 @@ module OddJobs.Job
   , AllJobTypes(..)
   , ResourceId(..)
   , FunctionName
+  , RunnerEnv(..)
 
   -- ** Structured logging
   --
