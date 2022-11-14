@@ -38,6 +38,7 @@ module OddJobs.Job
   , AllJobTypes(..)
   , ResourceId(..)
   , FunctionName
+  , RunnerEnv(..)
 
   -- ** Structured logging
   --
@@ -740,7 +741,7 @@ scheduleJob conn tname payload runAt = do
   case rs of
     [] -> Prelude.error . (<> "Not expecting a blank result set when creating a job. Query=") <$> queryFormatter
     [r] -> pure r
-    _ -> Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=") <$> queryFormatter 
+    _ -> Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=") <$> queryFormatter
 
 type ResourceList = [(ResourceId, Int)]
 
@@ -840,4 +841,3 @@ fetchAllJobRunners :: (MonadIO m)
                    -> m [JobRunnerName]
 fetchAllJobRunners UIConfig{uicfgTableName, uicfgDbPool} = liftIO $ withResource uicfgDbPool $ \conn -> do
   mapMaybe fromOnly <$> PGS.query conn "select distinct locked_by from ?" (Only uicfgTableName)
-
