@@ -55,6 +55,7 @@ module OddJobs.Job
   , jobEventListener
   , jobPoller
   , jobPollingSql
+  , pollRunJob
   , JobRunner
   , HasJobRunner (..)
 
@@ -589,66 +590,75 @@ jobCountsByTypeSqlM = do
 --         job was picked up execution, but didn't complete on time (possible
 --         because the thread/process executing it crashed without being able to
 --         update the DB)
-
 jobPoller :: (HasJobRunner m) => m ()
 jobPoller = do
   processName <- liftIO jobWorkerName
-  pool <- getDbPool
-  tname <- getTableName
-  lockTimeout <- getDefaultJobTimeout
   log LevelInfo $ LogText $ toS $ "Starting the job monitor via DB polling with processName=" <> processName
 
-  let poll conn mResCfg = do
-        nextAction <- mask_ $ do
-          log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
-          t <- liftIO getCurrentTime
-          r <- case mResCfg of
-            Nothing -> liftIO $
-               PGS.query conn jobPollingSql
-               ( tname
-               , Locked
-               , t
-               , processName
-               , tname
-               , t
-               , (In [Queued, Retry])
-               , Locked
-               , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
-            Just ResourceCfg{..} -> liftIO $
-               PGS.query conn jobPollingWithResourceSql
-               ( tname
-               , Locked
-               , t
-               , processName
-               , tname
-               , t
-               , (In [Queued, Retry])
-               , Locked
-               , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t)
-               , resCfgCheckResourceFunction
-               )
-          case r of
-            -- When we don't have any jobs to run, we can relax a bit...
-            [] -> pure delayAction
-
-            -- When we find a job to run, fork and try to find the next job without any delay...
-            [Only (jid :: JobId)] -> do
-              void $ async $ runJob jid
-              pure noDelayAction
-
-            x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ (show x)
-        nextAction
-
   concurrencyControlFn <- getConcurrencyControlFn
-  withResource pool $ \pollerDbConn -> forever $ concurrencyControlFn pollerDbConn >>= \case
-    DontPoll -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
-    PollAny -> poll pollerDbConn Nothing
-    PollWithResources resCfg -> poll pollerDbConn (Just resCfg)
+  pool <- getDbPool
+  forever $ do
+    concurencyPolicy <- withResource pool concurrencyControlFn
+    case concurencyPolicy of
+      DontPoll -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
+      PollAny -> void $ pollRunJob processName Nothing
+      PollWithResources resCfg -> void $ pollRunJob processName (Just resCfg)
 
+-- | Polls a job and runs it, or executes a delay action if no job was found
+--
+--   returns an async to the task that was started, allowing you
+--   to block until it's finished
+pollRunJob :: (HasJobRunner m) => String -> Maybe ResourceCfg -> m (Maybe (Async ()))
+pollRunJob processName mResCfg = do
+    tname <- getTableName
+    -- note it's better to use fine grained pool connection,
+    -- since data.pool already has it's internal resource cache.
+    -- this way the user can configure how long a connection
+    -- needs to remain open.
+    pool <- getDbPool
+    lockTimeout <- getDefaultJobTimeout
+    nextAction <- withResource pool $ \pollerDbConn -> mask_ $ do
+      log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
+      t <- liftIO getCurrentTime
+      r <- case mResCfg of
+        Nothing -> liftIO $
+           PGS.query pollerDbConn jobPollingSql
+           ( tname
+           , Locked
+           , t
+           , processName
+           , tname
+           , t
+           , (In [Queued, Retry])
+           , Locked
+           , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
+        Just ResourceCfg{..} -> liftIO $
+           PGS.query pollerDbConn jobPollingWithResourceSql
+           ( tname
+           , Locked
+           , t
+           , processName
+           , tname
+           , t
+           , (In [Queued, Retry])
+           , Locked
+           , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t)
+           , resCfgCheckResourceFunction
+           )
+      case r of
+        -- When we don't have any jobs to run, we can relax a bit...
+        [] -> pure (Nothing <$ delayAction)
+
+        -- When we find a job to run, fork and try to find the next job without any delay...
+        [Only (jid :: JobId)] -> do
+          x <- async $ runJob jid
+          pure $ Just x <$ noDelayAction
+
+        x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ (show x)
+    nextAction
   where
     delayAction = delaySeconds =<< getPollingInterval
     noDelayAction = pure ()
-
 -- | Executes 'killJobPollingSql' every 'cfgPollingInterval' seconds to pick up jobs
 -- that are cancelled and need to be killed. Uses @UPDATE@ along with @SELECT...
 -- ..FOR UPDATE@ to efficiently find a job that matches /all/ of the following
