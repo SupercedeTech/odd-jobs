@@ -584,7 +584,7 @@ pollRunJob processName mResCfg = do
     -- needs to remain open.
     pool <- getDbPool
     lockTimeout <- getDefaultJobTimeout
-    join $ withResource pool $ \pollerDbConn -> mask_ $ do
+    withResource pool $ \pollerDbConn -> mask_ $ do
       log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
       t <- liftIO getCurrentTime
       r <- case mResCfg of
@@ -622,6 +622,7 @@ pollRunJob processName mResCfg = do
           pure $ Just x <$ noDelayAction
 
         x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ show x
+    nextAction
   where
     delayAction = delaySeconds =<< getPollingInterval
     noDelayAction = pure ()
