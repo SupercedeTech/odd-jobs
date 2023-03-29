@@ -587,7 +587,31 @@ pollRunJob processName mResCfg = do
     nextAction <- withResource pool $ \pollerDbConn -> mask_ $ do
       log LevelDebug $ LogText $ toS $ "[" <> processName <> "] Polling the job queue.."
       t <- liftIO getCurrentTime
-      r <- jobPollingIO pollerDbConn processName tname lockTimeout
+      r <- case mResCfg of
+          Nothing -> liftIO $
+             PGS.query conn jobPollingSql
+             ( tname
+             , Locked
+             , t
+             , processName
+             , tname
+             , t
+             , In [Queued, Retry]
+             , Locked
+             , addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t)
+          Just ResourceCfg{..} -> liftIO $
+             PGS.query conn jobPollingWithResourceSql
+             ( tname
+             , Locked
+             , t
+             , processName
+             , tname
+             , t
+             , In [Queued, Retry]
+             , Locked
+             , addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t
+             , resCfgCheckResourceFunction
+             )
       case r of
         -- When we don't have any jobs to run, we can relax a bit...
         [] -> pure (Nothing <$ delayAction)
