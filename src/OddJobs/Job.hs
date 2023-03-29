@@ -616,29 +616,13 @@ pollRunJob processName mResCfg = do
         -- When we don't have any jobs to run, we can relax a bit...
         [] -> pure (Nothing <$ delayAction)
 
-<<<<<<< variant A
-          x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ show x
-
-  concurrencyControlFn <- getConcurrencyControlFn
-  withResource pool $ \pollerDbConn -> forever $ concurrencyControlFn pollerDbConn >>= \case
-    DontPoll -> do
-      log LevelWarn $ LogText "NOT polling the job queue due to concurrency control"
-      -- If we can't run any jobs ATM, relax and wait for resources to free up
-      delayAction
-    PollAny -> poll pollerDbConn Nothing
-    PollWithResources resCfg -> poll pollerDbConn (Just resCfg)
->>>>>>> variant B
         -- When we find a job to run, fork and try to find the next job without any delay...
         [Only (jid :: JobId)] -> do
           x <- async $ runJob jid
           pure $ Just x <$ noDelayAction
-======= end
 
-<<<<<<< variant A
->>>>>>> variant B
         x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ (show x)
     nextAction
-======= end
   where
     delayAction = delaySeconds =<< getPollingInterval
     noDelayAction = pure ()
@@ -766,12 +750,7 @@ scheduleJob conn tname payload runAt = do
   case rs of
     [] -> Prelude.error . (<> "Not expecting a blank result set when creating a job. Query=") <$> queryFormatter
     [r] -> pure r
-<<<<<<< HEAD
     _ -> Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=") <$> queryFormatter
-=======
-<<<<<<< variant A
-    _ -> Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=") <$> queryFormatter
->>>>>>> c08d9d8 (Expose poll run job)
 
 type ResourceList = [(ResourceId, Int)]
 
@@ -816,10 +795,6 @@ scheduleJobWithResources conn tname ResourceCfg{..} payload resources runAt = do
   PGS.commit conn
 
   pure job
->>>>>>> variant B
-    _ -> (Prelude.error . (<> "Not expecting multiple rows when creating a single job. Query=")) <$> queryFormatter
-======= end
-
 
 -- getRunnerEnv :: (HasJobRunner m) => m RunnerEnv
 -- getRunnerEnv = ask
