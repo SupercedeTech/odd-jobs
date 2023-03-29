@@ -567,7 +567,7 @@ jobPoller = do
   forever $ do
     concurencyPolicy <- withResource pool concurrencyControlFn
     case concurencyPolicy of
-      DontPoll -> log LevelWarn $ LogText $ "NOT polling the job queue due to concurrency control"
+      DontPoll -> log LevelWarn $ LogText "NOT polling the job queue due to concurrency control"
       PollAny -> void $ pollRunJob processName Nothing
       PollWithResources resCfg -> void $ pollRunJob processName (Just resCfg)
 
@@ -596,9 +596,9 @@ pollRunJob processName mResCfg = do
            , processName
            , tname
            , t
-           , (In [Queued, Retry])
+           , In [Queued, Retry]
            , Locked
-           , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t))
+           , addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t)
         Just ResourceCfg{..} -> liftIO $
            PGS.query pollerDbConn jobPollingWithResourceSql
            ( tname
@@ -607,9 +607,9 @@ pollRunJob processName mResCfg = do
            , processName
            , tname
            , t
-           , (In [Queued, Retry])
+           , In [Queued, Retry]
            , Locked
-           , (addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t)
+           , addUTCTime (fromIntegral $ negate $ unSeconds lockTimeout) t
            , resCfgCheckResourceFunction
            )
       case r of
@@ -621,7 +621,7 @@ pollRunJob processName mResCfg = do
           x <- async $ runJob jid
           pure $ Just x <$ noDelayAction
 
-        x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ (show x)
+        x -> error $ "WTF just happened? I was supposed to get only a single row, but got: " ++ show x
     nextAction
   where
     delayAction = delaySeconds =<< getPollingInterval
