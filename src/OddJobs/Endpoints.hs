@@ -39,6 +39,7 @@ import Data.List ((\\))
 import qualified System.Log.FastLogger as FLogger
 import qualified System.Log.FastLogger.Date as FLogger
 import Control.Monad.Logger as MLogger
+import Control.Monad (void)
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.List as DL
 import UnliftIO.IORef

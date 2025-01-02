@@ -113,7 +113,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson (Parser, parseMaybe)
 import Data.String.Conv (StringConv(..), toS)
 import Data.Functor (void)
-import Control.Monad (forever)
+import Control.Monad (forever, forM_)
 import Data.Maybe (isNothing, maybe, fromMaybe, listToMaybe, mapMaybe)
 import Data.Either (either)
 import Control.Monad.Reader
