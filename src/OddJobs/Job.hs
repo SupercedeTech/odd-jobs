@@ -110,7 +110,7 @@ import Data.Text.Conversions
 import Data.Time
 import Data.Aeson hiding (Success)
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Types as Aeson (Parser, parseMaybe)
+import Data.Aeson.Types hiding(Success)
 import Data.String.Conv (StringConv(..), toS)
 import Data.Functor (void)
 import Control.Monad (forever, forM_)
@@ -126,7 +126,6 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import System.FilePath (FilePath)
 import qualified System.Directory as Dir
-import Data.Aeson.Internal (iparse, IResult(..), formatError)
 import Prelude hiding (log)
 import GHC.Exts (toList)
 import Database.PostgreSQL.Simple.Types as PGS (Identifier(..))
@@ -747,7 +746,7 @@ jobEventListener = do
 
               -- Checking if job needs to be fired immediately AND it is not already
               -- taken by some othe thread, by the time it got to us
-              Right (v :: Value) -> case (Aeson.parseMaybe parser v) of
+              Right (v :: Value) -> case (parseMaybe parser v) of
                 Nothing -> log LevelError $ LogText $ toS $ "Unable to extract id/run_at/locked_at from " <> show pload
                 Just (jid, runAt_, mLockedAt_) -> do
                   t <- liftIO getCurrentTime
@@ -766,7 +765,7 @@ jobEventListener = do
         PollAny -> runNotifWithFilter Nothing
         PollWithResources resCfg -> runNotifWithFilter (Just resCfg)
   where
-    parser :: Value -> Aeson.Parser (JobId, UTCTime, Maybe UTCTime)
+    parser :: Value -> Parser (JobId, UTCTime, Maybe UTCTime)
     parser = withObject "expecting an object to parse job.run_at and job.locked_at" $ \o -> do
       runAt_ <- o .: "run_at"
       mLockedAt_ <- o .:? "locked_at"
@@ -889,7 +888,7 @@ throwParsePayload :: (FromJSON a)
 throwParsePayload job =
   throwParsePayloadWith parseJSON job
 
-eitherParsePayloadWith :: (Aeson.Value -> Aeson.Parser a)
+eitherParsePayloadWith :: (Aeson.Value -> Parser a)
                        -> Job
                        -> Either String a
 eitherParsePayloadWith parser Job{jobPayload} = do
@@ -898,7 +897,7 @@ eitherParsePayloadWith parser Job{jobPayload} = do
     IError jpath e -> Left $ formatError jpath e
     ISuccess r -> Right r
 
-throwParsePayloadWith :: (Aeson.Value -> Aeson.Parser a)
+throwParsePayloadWith :: (Aeson.Value -> Parser a)
                       -> Job
                       -> IO a
 throwParsePayloadWith parser job =
