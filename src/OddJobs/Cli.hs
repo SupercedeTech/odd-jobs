@@ -5,7 +5,7 @@
 module OddJobs.Cli where
 
 import Options.Applicative as Opts
-import Data.Text
+import Data.Text hiding (show)
 import OddJobs.Job (startJobRunner, Config(..))
 import System.Daemonize (DaemonOptions(..), daemonize)
 import System.FilePath (FilePath)
