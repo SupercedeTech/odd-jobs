@@ -19,7 +19,7 @@ import Servant.HTML.Lucid
 import Lucid
 import Lucid.Html5
 import Lucid.Base
-import Data.Text as T
+import Data.Text as T hiding (show)
 import Network.Wai.Handler.Warp   (run)
 import Servant.Server.StaticFiles (serveDirectoryFileServer)
 import UnliftIO hiding (Handler)
